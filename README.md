@@ -1,3 +1,4 @@
+[![Test](https://github.com/0razzu/formal-lang-course/actions/workflows/test.yml/badge.svg)](https://github.com/0razzu/formal-lang-course/actions/workflows/test.yml)
 [![Check code style](https://github.com/0razzu/formal-lang-course/actions/workflows/code_style.yml/badge.svg)](https://github.com/0razzu/formal-lang-course/actions/workflows/code_style.yml)
 [![Code style](https://img.shields.io/badge/Code%20style-black-000000.svg)](https://github.com/psf/black)
 ---
