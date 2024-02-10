@@ -3,9 +3,7 @@ from networkx import MultiDiGraph
 from collections import namedtuple
 
 
-
-GraphProps = namedtuple('GraphProps', ['node_quan', 'edge_quan', 'labels'])
-
+GraphProps = namedtuple("GraphProps", ["node_quan", "edge_quan", "labels"])
 
 
 def download_by_name(name: str) -> MultiDiGraph:
@@ -13,14 +11,14 @@ def download_by_name(name: str) -> MultiDiGraph:
 
 
 def get_labels(graph: MultiDiGraph) -> set:
-    return set([label for _, _, label in graph.edges(data='label')])
+    return set([label for _, _, label in graph.edges(data="label")])
 
 
 def get_props(graph: MultiDiGraph) -> GraphProps:
     return GraphProps(
-        node_quan=graph.number_of_nodes(), 
+        node_quan=graph.number_of_nodes(),
         edge_quan=graph.number_of_edges(),
-        labels=get_labels(graph)
+        labels=get_labels(graph),
     )
 
 
