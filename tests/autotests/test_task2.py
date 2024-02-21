@@ -82,9 +82,12 @@ class GraphWordsHelper:
     def _is_final_node(self, node):
         return self.graph.nodes(data=True)[node]["is_final"]
 
-    def generate_words_by_node(self, node, word=None):
+    def generate_words_by_node(self, node, word=None, visited=None):
         if word is None:
             word = list()
+        if visited is None:
+            visited = set()
+        visited.add(node)
         for trans in self._take_a_step(node):
             tmp = word.copy()
             label = trans["label"]
@@ -92,7 +95,11 @@ class GraphWordsHelper:
                 tmp.append(label)
             if self._is_final_node(trans["node_to"]):
                 yield tmp.copy()
-            yield from self.generate_words_by_node(trans["node_to"], tmp.copy())
+            if trans["node_to"] not in visited:
+                yield from self.generate_words_by_node(
+                    trans["node_to"], tmp.copy(), visited
+                )
+        visited.remove(node)
 
     def take_words_by_node(self, node, n):
         final_nodes = list(map(lambda x: x[0], self.graph.nodes(data="is_final")))
