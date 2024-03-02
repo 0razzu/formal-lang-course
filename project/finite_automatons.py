@@ -1,3 +1,5 @@
+from networkx import MultiDiGraph
+from networkx.classes.reportviews import NodeView
 from pyformlang.regular_expression import Regex
 from pyformlang.finite_automaton import (
     DeterministicFiniteAutomaton,
@@ -5,8 +7,27 @@ from pyformlang.finite_automaton import (
     State,
     Symbol,
 )
-from networkx import MultiDiGraph
-from typing import Set
+from typing import Set, Iterable
+
+
+class FiniteAutomaton:
+    def accepts(self, word: Iterable[Symbol]) -> bool:
+        pass
+
+    def is_empty(self) -> bool:
+        pass
+
+
+def intersect_automata(
+    automaton1: FiniteAutomaton, automaton2: FiniteAutomaton
+) -> FiniteAutomaton:
+    pass
+
+
+def paths_ends(
+    graph: MultiDiGraph, start_nodes: set[int], final_nodes: set[int], regex: str
+) -> list[tuple[NodeView, NodeView]]:
+    pass
 
 
 def regex_to_dfa(regex: str) -> DeterministicFiniteAutomaton:
