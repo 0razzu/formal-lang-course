@@ -38,7 +38,22 @@ class FiniteAutomaton:
         return matrix_to_nfa(self).accepts(word)
 
     def is_empty(self) -> bool:
-        return len(self.matrix.values()) == 0
+        if len(self.matrix) == 0:
+            return True
+
+        m = sum(self.matrix.values())
+        for _ in range(m.shape[0]):
+            m += m @ m
+
+        if m.shape[0] != 0 or m.shape[1] != 0:
+            return True
+
+        for u in self.start_states:
+            for v in self.final_states:
+                if m[u, v] != 0:
+                    return False
+
+        return True
 
 
 def to_set(obj):
