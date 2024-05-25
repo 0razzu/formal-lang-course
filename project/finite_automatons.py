@@ -1,4 +1,4 @@
-from networkx import MultiDiGraph, transitive_closure
+from networkx import MultiDiGraph
 from networkx.classes.reportviews import NodeView
 from pyformlang.regular_expression import Regex
 from pyformlang.finite_automaton import (
@@ -8,16 +8,16 @@ from pyformlang.finite_automaton import (
     Symbol,
 )
 from scipy.sparse import dok_matrix, kron
-from typing import Dict, Iterable, Set
+from typing import Iterable
 
 
 class FiniteAutomaton:
     def __init__(
         self,
         automaton,
-        start_states: Set[State] = {},
-        final_states: Set[State] = {},
-        state_to_idx: Dict[State, int] = {},
+        start_states: set[State] = {},
+        final_states: set[State] = {},
+        state_to_idx: dict[State, int] = {},
     ):
         if isinstance(automaton, DeterministicFiniteAutomaton) or isinstance(
             automaton, NondeterministicFiniteAutomaton
@@ -38,7 +38,13 @@ class FiniteAutomaton:
         return matrix_to_nfa(self).accepts(word)
 
     def is_empty(self) -> bool:
-        return len(self.matrix) == 0 or len(list(self.matrix.values())[0]) == 0
+        return len(self.matrix.values()) == 0
+
+
+def to_set(obj):
+    if isinstance(obj, set):
+        return obj
+    return {obj}
 
 
 def nfa_to_matrix(automaton: NondeterministicFiniteAutomaton) -> FiniteAutomaton:
@@ -52,7 +58,7 @@ def nfa_to_matrix(automaton: NondeterministicFiniteAutomaton) -> FiniteAutomaton
 
         for from_state, transitions in state_transitions.items():
             if label in transitions:
-                for to_state in {transitions[label]}:
+                for to_state in to_set(transitions[label]):
                     matrix[label][
                         state_to_idx[from_state], state_to_idx[to_state]
                     ] = True
@@ -116,12 +122,22 @@ def intersect_automata(
 def paths_ends(
     graph: MultiDiGraph, start_nodes: set[int], final_nodes: set[int], regex: str
 ) -> list[tuple[NodeView, NodeView]]:
+    regex_automaton = FiniteAutomaton(regex_to_dfa(regex))
     intersection = intersect_automata(
-        FiniteAutomaton(automaton=graph_to_nfa(graph)),
-        FiniteAutomaton(automaton=regex_to_dfa(regex)),
+        FiniteAutomaton(graph_to_nfa(graph, start_nodes, final_nodes)),
+        regex_automaton,
     )
+    size = len(regex_automaton.state_to_idx)
 
-    return zip(intersection.start_states, intersection.final_states)
+    res = []
+    for i, j in zip(*transitive_closure(intersection).nonzero()):
+        if (
+            State(i) in intersection.start_states
+            and State(j) in intersection.final_states
+        ):
+            res.append((i // size, j // size))
+
+    return res
 
 
 def regex_to_dfa(regex: str) -> DeterministicFiniteAutomaton:
@@ -130,8 +146,8 @@ def regex_to_dfa(regex: str) -> DeterministicFiniteAutomaton:
 
 def graph_to_nfa(
     graph: MultiDiGraph,
-    start_nodes: Set[int],
-    final_nodes: Set[int],
+    start_nodes: set[int],
+    final_nodes: set[int],
 ) -> NondeterministicFiniteAutomaton:
     start_nodes = start_nodes or set(graph.nodes())
     final_nodes = final_nodes or set(graph.nodes())
@@ -148,3 +164,39 @@ def graph_to_nfa(
         nfa.add_transition(State(from_node), Symbol(label), State(to_node))
 
     return nfa
+
+
+def transitive_closure(fa: FiniteAutomaton) -> dok_matrix:
+    if fa.is_empty():
+        return dok_matrix((0, 0), dtype=bool)
+
+    f = None
+    for m in fa.matrix.values():
+        f = m if f is None else f + m
+
+    p = 0
+    while f.count_nonzero() != p:
+        p = f.count_nonzero()
+        f += f @ f
+
+    return f
+
+
+def reachability_with_constraints(
+    fa: FiniteAutomaton, constraints_fa: FiniteAutomaton
+) -> dict[int, set[int]]:
+    intersected = intersect_automata(fa, constraints_fa)
+
+    res = dict()
+    for s in fa.start_states:
+        res[fa.state_to_idx[s]] = set()
+
+    fa_len = len(constraints_fa.state_to_idx)
+    for i, j in zip(*transitive_closure(intersected).nonzero()):
+        if (
+            State(i) in intersected.start_states
+            and State(j) in intersected.final_states
+        ):
+            res[i // fa_len].add(j // fa_len)
+
+    return res
