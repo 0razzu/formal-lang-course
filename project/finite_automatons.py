@@ -1,5 +1,6 @@
-from networkx import MultiDiGraph
+from networkx import MultiDiGraph, DiGraph
 from networkx.classes.reportviews import NodeView
+from pyformlang.cfg import Epsilon
 from pyformlang.regular_expression import Regex
 from pyformlang.finite_automaton import (
     DeterministicFiniteAutomaton,
@@ -7,6 +8,7 @@ from pyformlang.finite_automaton import (
     State,
     Symbol,
 )
+from pyformlang.rsa import RecursiveAutomaton
 from scipy.sparse import dok_matrix, kron
 from typing import Iterable
 
@@ -54,6 +56,12 @@ class FiniteAutomaton:
                     return False
 
         return True
+
+    def idx_to_state(self) -> dict[int, State]:
+        return {i: s for s, i in self.state_to_idx.items()}
+
+    def states_len(self) -> int:
+        return len(self.state_to_idx)
 
 
 def to_set(obj):
@@ -160,7 +168,7 @@ def regex_to_dfa(regex: str) -> DeterministicFiniteAutomaton:
 
 
 def graph_to_nfa(
-    graph: MultiDiGraph,
+    graph: DiGraph,
     start_nodes: set[int],
     final_nodes: set[int],
 ) -> NondeterministicFiniteAutomaton:
@@ -179,6 +187,53 @@ def graph_to_nfa(
         nfa.add_transition(State(from_node), Symbol(label), State(to_node))
 
     return nfa
+
+
+def rsm_to_matrix(rsm: RecursiveAutomaton) -> FiniteAutomaton:
+    states = set()
+    start_states = set()
+    final_states = set()
+    nullable_symbols = set()
+
+    for var, product in rsm.boxes.items():
+        for state in product.dfa.states:
+            s = State((var, state.value))
+
+            states.add(s)
+
+            if state in product.dfa.start_states:
+                start_states.add(s)
+
+            if state in product.dfa.final_states:
+                final_states.add(s)
+
+    states_len = len(states)
+    state_to_idx = {
+        s: i for i, s in enumerate(sorted(states, key=lambda x: x.value[1]))
+    }
+
+    matrix = {}
+    for var, product in rsm.boxes.items():
+        for fr, transition in product.dfa.to_dict().items():
+            for symbol, tos in transition.items():
+                label = symbol.value
+
+                if symbol not in matrix:
+                    matrix[label] = dok_matrix((states_len, states_len), dtype=bool)
+
+                for to in to_set(tos):
+                    matrix[label][
+                        state_to_idx[State((var, fr.value))],
+                        state_to_idx[State((var, to.value))],
+                    ] = True
+
+                if isinstance(tos, Epsilon):
+                    nullable_symbols.add(label)
+
+    res = FiniteAutomaton(matrix, start_states, final_states, state_to_idx)
+    res.nullable_symbols = nullable_symbols
+
+    return res
 
 
 def transitive_closure(fa: FiniteAutomaton) -> dok_matrix:

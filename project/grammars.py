@@ -1,6 +1,19 @@
+import re
+
 import networkx as nx
 from pyformlang.cfg import Variable, Terminal, CFG, Epsilon
-from scipy.sparse import dok_matrix
+from pyformlang.finite_automaton import Symbol
+from pyformlang.regular_expression import Regex
+from pyformlang.rsa import RecursiveAutomaton, Box
+from scipy.sparse import dok_matrix, eye
+
+from project.finite_automatons import (
+    graph_to_nfa,
+    nfa_to_matrix,
+    rsm_to_matrix,
+    transitive_closure,
+    intersect_automata,
+)
 
 
 def cfg_to_weak_normal_form(cfg: CFG) -> CFG:
@@ -144,3 +157,114 @@ def cfpq_with_matrix(
         for row, col in zip(rows, cols)
         if row in start_nodes and col in final_nodes
     }
+
+
+def cfpq_with_tensor(
+    rsm: RecursiveAutomaton,
+    graph: nx.DiGraph,
+    final_nodes: set[int] = None,
+    start_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    rsm_matrix = rsm_to_matrix(rsm)
+    graph_matrix = nfa_to_matrix(graph_to_nfa(graph, start_nodes, final_nodes))
+    n = graph_matrix.states_len()
+
+    for var in rsm_matrix.nullable_symbols:
+        if var not in graph_matrix.matrix:
+            graph_matrix.matrix[var] = dok_matrix((n, n), dtype=bool)
+        graph_matrix.matrix[var] += eye(n, dtype=bool)
+
+    rsm_matrix_i2s = rsm_matrix.idx_to_state()
+    graph_matrix_i2s = graph_matrix.idx_to_state()
+
+    last_nonzero = 0
+    while True:
+        closure = [
+            *zip(
+                *transitive_closure(
+                    intersect_automata(rsm_matrix, graph_matrix)
+                ).nonzero()
+            )
+        ]
+
+        cur_nonzero = len(closure)
+        if cur_nonzero == last_nonzero:
+            break
+        last_nonzero = cur_nonzero
+
+        for i, j in closure:
+            fr = rsm_matrix_i2s[i // n]
+            to = rsm_matrix_i2s[j // n]
+
+            if fr in rsm_matrix.start_states and to in rsm_matrix.final_states:
+                var = fr.value[0]
+
+                if var not in graph_matrix.matrix:
+                    graph_matrix.matrix[var] = dok_matrix((n, n), dtype=bool)
+
+                graph_matrix.matrix[var][i % n, j % n] = True
+
+    return {
+        (i, j)
+        for m in graph_matrix.matrix.values()
+        for i, j in zip(*m.nonzero())
+        if graph_matrix_i2s[i] in rsm_matrix.start_states
+        and graph_matrix_i2s[j] in rsm_matrix.final_states
+    }
+
+
+def cfg_to_rsm(cfg: CFG) -> RecursiveAutomaton:
+    res_productions = {}
+
+    for production in cfg.productions:
+        if len(production.body) == 0:
+            regex = Regex(
+                " ".join(
+                    "$" if isinstance(var, Epsilon) else var.value
+                    for var in production.body
+                )
+            )
+        else:
+            regex = Regex("$")
+
+        if production.head not in res_productions:
+            res_productions[production.head] = regex
+        else:
+            res_productions[production.head] = res_productions[production.head] or regex
+
+    res_productions = {
+        Symbol(var): Box(regex.to_epsilon_nfa().to_deterministic(), Symbol(var))
+        for var, regex in res_productions.items()
+    }
+
+    return RecursiveAutomaton(
+        res_productions.keys(), Symbol("S"), set(res_productions.values())
+    )
+
+
+def ebnf_to_rsm(ebnf: str) -> RecursiveAutomaton:
+    res_productions = {}
+
+    for production_str in ebnf.splitlines():
+        production_str = production_str.strip()
+
+        if "->" not in production_str:
+            continue
+
+        head, body = re.split(r"\s*->\s*", production_str)
+        if body == "":
+            body = Epsilon().to_text()
+
+        if head in res_productions:
+            res_productions[head] += f" | {body}"
+        else:
+            res_productions[head] = body
+
+    res_productions = {
+        Symbol(var): Box(Regex(regex).to_epsilon_nfa().to_deterministic(), Symbol(var))
+        for var, regex in res_productions.items()
+    }
+
+    return RecursiveAutomaton(
+        res_productions.keys(), Symbol("S"), set(res_productions.values())
+    )
