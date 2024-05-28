@@ -1,8 +1,9 @@
 import re
+from copy import deepcopy
 
 import networkx as nx
 from pyformlang.cfg import Variable, Terminal, CFG, Epsilon
-from pyformlang.finite_automaton import Symbol
+from pyformlang.finite_automaton import Symbol, State
 from pyformlang.regular_expression import Regex
 from pyformlang.rsa import RecursiveAutomaton, Box
 from scipy.sparse import dok_matrix, eye
@@ -268,3 +269,56 @@ def ebnf_to_rsm(ebnf: str) -> RecursiveAutomaton:
     return RecursiveAutomaton(
         res_productions.keys(), Symbol("S"), set(res_productions.values())
     )
+
+
+def cfpq_with_gll(
+    rsm: RecursiveAutomaton,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    if start_nodes is None:
+        start_nodes = graph.nodes
+    if final_nodes is None:
+        final_nodes = graph.nodes
+
+    ini_label = rsm.initial_label.value if rsm.initial_label.value is not None else "S"
+
+    dfa_start_state = rsm.boxes[ini_label].dfa.to_deterministic().start_state.value
+    dfa = rsm.boxes[ini_label].dfa.to_dict()
+    dfa.setdefault(State(dfa_start_state), {})
+    stack = {(n, ini_label): set() for n in start_nodes}
+    visited = {(n, (dfa_start_state, ini_label), (n, ini_label)) for n in start_nodes}
+    queue = deepcopy(visited)
+
+    def visit(node, rsm_state, stack_state):
+        s = (node, rsm_state, stack_state)
+
+        if s not in visited:
+            visited.add(s)
+            queue.add(s)
+
+    res = set()
+    while len(queue) > 0:
+        node, (q_rsm_state, _), (stack_node, stack_label) = queue.pop()
+        q_stack_state = (stack_node, stack_label)
+
+        if (
+            stack_node in start_nodes
+            and stack_label == dfa_start_state
+            and node in final_nodes
+        ):
+            res.add((stack_node, node))
+
+        for s_rsm_state, stack_state in stack.setdefault(q_stack_state, set()):
+            visit(node, s_rsm_state, stack_state)
+
+        for symbol in dfa.keys():
+            if symbol in rsm.labels:
+                start_sym_state = rsm.boxes[symbol].dfa.start_state.value
+                s_rsm_state = (start_sym_state, symbol.value)
+                stack_state = (node, symbol.value)
+
+                visit(node, s_rsm_state, stack_state)
+
+    return res
