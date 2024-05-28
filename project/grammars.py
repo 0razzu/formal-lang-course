@@ -1,6 +1,20 @@
+import re
+from copy import deepcopy
+
 import networkx as nx
 from pyformlang.cfg import Variable, Terminal, CFG, Epsilon
-from scipy.sparse import dok_matrix
+from pyformlang.finite_automaton import Symbol, State
+from pyformlang.regular_expression import Regex
+from pyformlang.rsa import RecursiveAutomaton, Box
+from scipy.sparse import dok_matrix, eye
+
+from project.finite_automatons import (
+    graph_to_nfa,
+    nfa_to_matrix,
+    rsm_to_matrix,
+    transitive_closure,
+    intersect_automata,
+)
 
 
 def cfg_to_weak_normal_form(cfg: CFG) -> CFG:
@@ -144,3 +158,167 @@ def cfpq_with_matrix(
         for row, col in zip(rows, cols)
         if row in start_nodes and col in final_nodes
     }
+
+
+def cfpq_with_tensor(
+    rsm: RecursiveAutomaton,
+    graph: nx.DiGraph,
+    final_nodes: set[int] = None,
+    start_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    rsm_matrix = rsm_to_matrix(rsm)
+    graph_matrix = nfa_to_matrix(graph_to_nfa(graph, start_nodes, final_nodes))
+    n = graph_matrix.states_len()
+
+    for var in rsm_matrix.nullable_symbols:
+        if var not in graph_matrix.matrix:
+            graph_matrix.matrix[var] = dok_matrix((n, n), dtype=bool)
+        graph_matrix.matrix[var] += eye(n, dtype=bool)
+
+    rsm_matrix_i2s = rsm_matrix.idx_to_state()
+    graph_matrix_i2s = graph_matrix.idx_to_state()
+
+    last_nonzero = 0
+    while True:
+        closure = [
+            *zip(
+                *transitive_closure(
+                    intersect_automata(rsm_matrix, graph_matrix)
+                ).nonzero()
+            )
+        ]
+
+        cur_nonzero = len(closure)
+        if cur_nonzero == last_nonzero:
+            break
+        last_nonzero = cur_nonzero
+
+        for i, j in closure:
+            fr = rsm_matrix_i2s[i // n]
+            to = rsm_matrix_i2s[j // n]
+
+            if fr in rsm_matrix.start_states and to in rsm_matrix.final_states:
+                var = fr.value[0]
+
+                if var not in graph_matrix.matrix:
+                    graph_matrix.matrix[var] = dok_matrix((n, n), dtype=bool)
+
+                graph_matrix.matrix[var][i % n, j % n] = True
+
+    return {
+        (i, j)
+        for m in graph_matrix.matrix.values()
+        for i, j in zip(*m.nonzero())
+        if graph_matrix_i2s[i] in rsm_matrix.start_states
+        and graph_matrix_i2s[j] in rsm_matrix.final_states
+    }
+
+
+def cfg_to_rsm(cfg: CFG) -> RecursiveAutomaton:
+    res_productions = {}
+
+    for production in cfg.productions:
+        if len(production.body) == 0:
+            regex = Regex(
+                " ".join(
+                    "$" if isinstance(var, Epsilon) else var.value
+                    for var in production.body
+                )
+            )
+        else:
+            regex = Regex("$")
+
+        if production.head not in res_productions:
+            res_productions[production.head] = regex
+        else:
+            res_productions[production.head] = res_productions[production.head] or regex
+
+    res_productions = {
+        Symbol(var): Box(regex.to_epsilon_nfa().to_deterministic(), Symbol(var))
+        for var, regex in res_productions.items()
+    }
+
+    return RecursiveAutomaton(
+        res_productions.keys(), Symbol("S"), set(res_productions.values())
+    )
+
+
+def ebnf_to_rsm(ebnf: str) -> RecursiveAutomaton:
+    res_productions = {}
+
+    for production_str in ebnf.splitlines():
+        production_str = production_str.strip()
+
+        if "->" not in production_str:
+            continue
+
+        head, body = re.split(r"\s*->\s*", production_str)
+        if body == "":
+            body = Epsilon().to_text()
+
+        if head in res_productions:
+            res_productions[head] += f" | {body}"
+        else:
+            res_productions[head] = body
+
+    res_productions = {
+        Symbol(var): Box(Regex(regex).to_epsilon_nfa().to_deterministic(), Symbol(var))
+        for var, regex in res_productions.items()
+    }
+
+    return RecursiveAutomaton(
+        res_productions.keys(), Symbol("S"), set(res_productions.values())
+    )
+
+
+def cfpq_with_gll(
+    rsm: RecursiveAutomaton,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    if start_nodes is None:
+        start_nodes = graph.nodes
+    if final_nodes is None:
+        final_nodes = graph.nodes
+
+    ini_label = rsm.initial_label.value if rsm.initial_label.value is not None else "S"
+
+    dfa_start_state = rsm.boxes[ini_label].dfa.to_deterministic().start_state.value
+    dfa = rsm.boxes[ini_label].dfa.to_dict()
+    dfa.setdefault(State(dfa_start_state), {})
+    stack = {(n, ini_label): set() for n in start_nodes}
+    visited = {(n, (dfa_start_state, ini_label), (n, ini_label)) for n in start_nodes}
+    queue = deepcopy(visited)
+
+    def visit(node, rsm_state, stack_state):
+        s = (node, rsm_state, stack_state)
+
+        if s not in visited:
+            visited.add(s)
+            queue.add(s)
+
+    res = set()
+    while len(queue) > 0:
+        node, (q_rsm_state, _), (stack_node, stack_label) = queue.pop()
+        q_stack_state = (stack_node, stack_label)
+
+        if (
+            stack_node in start_nodes
+            and stack_label == dfa_start_state
+            and node in final_nodes
+        ):
+            res.add((stack_node, node))
+
+        for s_rsm_state, stack_state in stack.setdefault(q_stack_state, set()):
+            visit(node, s_rsm_state, stack_state)
+
+        for symbol in dfa.keys():
+            if symbol in rsm.labels:
+                start_sym_state = rsm.boxes[symbol].dfa.start_state.value
+                s_rsm_state = (start_sym_state, symbol.value)
+                stack_state = (node, symbol.value)
+
+                visit(node, s_rsm_state, stack_state)
+
+    return res
