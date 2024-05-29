@@ -2,7 +2,6 @@
 # You MUST NOT touch anything here except ONE block below
 # You CAN modify this file IF AND ONLY IF you have found a bug and are willing to fix it
 # Otherwise, please report it
-import inspect
 import io
 from contextlib import redirect_stdout
 
@@ -20,7 +19,7 @@ import ProgramGenerator
 
 # Fix import statements in try block to run tests
 try:
-    from project.task11 import prog_to_tree, nodes_count, tree_to_prog
+    from project.gql import prog_to_tree, nodes_count, tree_to_prog
 except ImportError:
     pytestmark = pytest.mark.skip("Task 11 is not ready to test!")
 
